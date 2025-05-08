@@ -2,19 +2,43 @@ import streamlit as st
 from utils import consultar, formatar_moeda
 import plotly.express as px
 
-# Função para exibir as métricas principais
-def exibir_metricas():
-    # === MÉTRICAS BASE ===
-    total_notas = consultar("SELECT COUNT(*) AS total FROM nfce;")['total'][0]
-    total_itens = consultar("SELECT COUNT(*) AS total FROM nfce_itens;")['total'][0]
-    total_cnpjs = consultar("SELECT COUNT(DISTINCT cnpj_emitente) AS total FROM nfce;")['total'][0]
-    total_faturado = consultar("SELECT SUM(valor_total) AS total FROM nfce;")['total'][0]
+# === CONSTANTES DE TABELAS NO BIGQUERY ===
+DATASET = "bdxml-459201.nfce_data"
 
-    # Cálculos derivados
+NFCE = f"`{DATASET}.nfce`"
+ITENS = f"`{DATASET}.nfce_itens`"
+
+def runpainel():
+    st.title("📊 Painel de Inteligência Fiscal - NFC-e")
+
+    # === SELEÇÃO DE MÊS ===
+    meses_disponiveis = consultar(f"""
+        SELECT DISTINCT FORMAT_DATE('%Y-%m', DATE(data_emissao)) AS mes
+        FROM {NFCE}
+        ORDER BY mes DESC;
+    """)["mes"].tolist()
+    mes_selecionado = st.selectbox("📅 Selecione o mês de referência:", ["Todos"] + meses_disponiveis)
+
+    # Filtro condicional para as consultas
+    filtro_mes = ""
+    if mes_selecionado != "Todos":
+        filtro_mes = f"WHERE FORMAT_DATE('%Y-%m', DATE(data_emissao)) = '{mes_selecionado}'"
+
+    # === MÉTRICAS BASE ===
+    total_notas = consultar(f"SELECT COUNT(*) AS total FROM {NFCE} {filtro_mes};")['total'][0]
+    total_itens = consultar(f"""
+        SELECT COUNT(*) AS total
+        FROM {ITENS} ni
+        JOIN {NFCE} nf ON nf.chave_acesso = ni.chave_acesso
+        {filtro_mes.replace('data_emissao', 'DATE(nf.data_emissao)')}
+    """)['total'][0]
+    total_cnpjs = consultar(f"SELECT COUNT(DISTINCT cnpj_emitente) AS total FROM {NFCE} {filtro_mes};")['total'][0]
+    total_faturado = consultar(f"SELECT SUM(valor_total) AS total FROM {NFCE} {filtro_mes};")['total'][0]
+
     ticket_medio = total_faturado / total_notas if total_notas > 0 else 0
     itens_por_nota = total_itens / total_notas if total_notas > 0 else 0
 
-    # === EXIBIÇÃO DAS MÉTRICAS ===
+    # Exibição das métricas
     col1, col2, col3, col4, col5, col6 = st.columns(6)
     col1.metric("🧾 Notas Emitidas", f"{total_notas:,}".replace(",", "."))
     col2.metric("📦 Itens Importados", f"{total_itens:,}".replace(",", "."))
@@ -23,106 +47,85 @@ def exibir_metricas():
     col5.metric("💰 Faturamento Total", formatar_moeda(total_faturado))
     col6.metric("📈 Ticket Médio", formatar_moeda(ticket_medio))
 
-# Função para exibir o faturamento por cliente com filtro por UF
-def exibir_faturamento_cliente():
     # === FATURAMENTO POR CLIENTE COM FILTRO POR UF ===
     st.markdown("---")
     st.subheader("💵 Faturamento por Cliente")
 
-    ufs_disponiveis = consultar("""
-        SELECT DISTINCT uf_origem 
-        FROM nfce 
-        WHERE uf_origem IS NOT NULL AND uf_origem != ''
+    if filtro_mes:
+        uf_filtro = filtro_mes + " AND uf_origem IS NOT NULL AND uf_origem != ''"
+    else:
+        uf_filtro = "WHERE uf_origem IS NOT NULL AND uf_origem != ''"
+
+    ufs_disponiveis = consultar(f"""
+        SELECT DISTINCT uf_origem
+        FROM {NFCE}
+        {uf_filtro}
         ORDER BY uf_origem;
     """)["uf_origem"].tolist()
-
     uf_selecionada = st.selectbox("Selecione a UF para filtrar os clientes:", ["Todas"] + ufs_disponiveis)
 
-    query_clientes = """
+    # Montar query com filtros combinados
+    condicoes = []
+    if mes_selecionado != "Todos":
+        condicoes.append(f"FORMAT_DATE('%Y-%m', DATE(nf.data_emissao)) = '{mes_selecionado}'")
+    if uf_selecionada != "Todas":
+        condicoes.append(f"nf.uf_origem = '{uf_selecionada}'")
+    where_clause = "WHERE " + " AND ".join(condicoes) if condicoes else ""
+
+    query_clientes = f"""
         SELECT 
             nf.uf_origem,
             nf.cnpj_emitente,
-            MAX(nf.razao_social_emitente) AS razao_social_emitente,  -- Pegando uma razão social qualquer
-            SUM(ni.valor_total) AS total_faturado,  -- Soma corretamente os valores da tabela nfce_itens
-            COUNT(DISTINCT nf.id) AS total_notas,  -- Contagem das notas fiscais únicas
-            COUNT(DISTINCT ni.codigo_produto) AS total_itens,  -- Contagem dos códigos de produto distintos
-            SUM(ni.valor_total) / COUNT(DISTINCT nf.id) AS ticket_medio,  -- Cálculo do ticket médio
-            COUNT(DISTINCT nf.id) AS quantidade_notas  -- Contagem de todas as notas emitidas
-        FROM nfce nf
-        JOIN nfce_itens ni ON nf.chave_acesso = ni.chave_acesso
-    """
-    if uf_selecionada != "Todas":
-        query_clientes += f" WHERE nf.uf_origem = '{uf_selecionada}'"
-
-    query_clientes += """
-        GROUP BY nf.uf_origem, nf.cnpj_emitente  -- Agrupamos apenas pelo CNPJ
+            MAX(nf.razao_social_emitente) AS razao_social_emitente,
+            SUM(ni.valor_total) AS total_faturado,
+            COUNT(DISTINCT nf.id) AS total_notas,
+            COUNT(DISTINCT ni.codigo_produto) AS total_itens,
+            SUM(ni.valor_total) / COUNT(DISTINCT nf.id) AS ticket_medio,
+            COUNT(DISTINCT nf.id) AS quantidade_notas
+        FROM {NFCE} nf
+        JOIN {ITENS} ni ON nf.chave_acesso = ni.chave_acesso
+        {where_clause}
+        GROUP BY nf.uf_origem, nf.cnpj_emitente
         ORDER BY total_faturado DESC;
     """
-
     faturamento = consultar(query_clientes)
-
-    # Reorganizando as colunas para garantir que a razão social seja a segunda coluna
     faturamento = faturamento[["razao_social_emitente", "uf_origem", "cnpj_emitente", "total_faturado", "total_itens", "ticket_medio", "quantidade_notas"]]
-    
-    # Formatando as colunas
     faturamento["total_faturado"] = faturamento["total_faturado"].apply(formatar_moeda)
     faturamento["ticket_medio"] = faturamento["ticket_medio"].apply(formatar_moeda)
-    
-    # Exibindo a tabela
     st.dataframe(faturamento, use_container_width=True)
 
-# Função para exibir o valor importado por estado
-def exibir_valor_importado_uf():
     # === VALOR IMPORTADO POR ESTADO ===
     st.markdown("---")
     st.subheader("🌎 Valor Importado por UF de Origem")
-    
-    estados = consultar("""
-        SELECT 
-            nf.uf_origem,
-            SUM(ni.valor_total) AS valor_total
-        FROM nfce nf
-        JOIN nfce_itens ni ON nf.chave_acesso = ni.chave_acesso
+
+    query_ufs = f"""
+        SELECT nf.uf_origem, SUM(ni.valor_total) AS valor_total
+        FROM {NFCE} nf
+        JOIN {ITENS} ni ON nf.chave_acesso = ni.chave_acesso
+        {where_clause}
         GROUP BY nf.uf_origem
         ORDER BY valor_total DESC;
-    """)
+    """
+    estados = consultar(query_ufs)
     estados["valor_total"] = estados["valor_total"].apply(formatar_moeda)
     st.dataframe(estados, use_container_width=True)
 
-# Função para exibir os meses com notas e valor total
-def exibir_periodos_com_notas():
-    # === MESES COM NOTAS E VALOR TOTAL ===
+    # === PERÍODOS COM NOTAS ===
     st.markdown("---")
     st.subheader("📅 Períodos com NFC-e Importadas")
-
-    meses = consultar("""
+    query_meses = f"""
         SELECT 
-            YEAR(data_emissao) AS ano,
-            MONTH(data_emissao) AS mes,
+            EXTRACT(YEAR FROM DATE(data_emissao)) AS ano,
+            EXTRACT(MONTH FROM DATE(data_emissao)) AS mes,
             SUM(valor_total) AS valor_total
-        FROM nfce
+        FROM {NFCE}
+        {filtro_mes}
         GROUP BY ano, mes
         ORDER BY ano DESC, mes DESC;
-    """)
+    """
+    meses = consultar(query_meses)
     meses["valor_total"] = meses["valor_total"].apply(formatar_moeda)
     st.dataframe(meses, use_container_width=True)
 
-# Função principal que executa o painel
-def runpainel():
-    st.title("📊 Painel de Inteligência Fiscal - NFC-e")
-
-    # Exibe as métricas principais
-    exibir_metricas()
-
-    # Exibe o faturamento por cliente
-    exibir_faturamento_cliente()
-
-    # Exibe o valor importado por estado
-    exibir_valor_importado_uf()
-
-    # Exibe os períodos com notas e valor total
-    exibir_periodos_com_notas()
-
-    # Rodapé
     st.markdown("---")
     st.caption("Versão Geral")

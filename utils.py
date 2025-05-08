@@ -1,58 +1,58 @@
-import mysql.connector
+from google.cloud import bigquery
 import pandas as pd
 import os
 
-# Conexão com o banco de dados MySQL
-def conectar_mysql():
-    return mysql.connector.connect(
-        host="172.16.40.90",
-        user="root",
-        password="6071",
-        database="nfce_db"
-    )
+# Caminho para o arquivo de credenciais do serviço
+CAMINHO_CREDENCIAL = os.path.join(os.path.dirname(__file__), "credentials.json")
 
-# Função para consultar dados no MySQL
+# Cria o cliente do BigQuery
+def conectar_bigquery():
+    return bigquery.Client.from_service_account_json(CAMINHO_CREDENCIAL)
+
+# Executa query SQL no BigQuery e retorna um DataFrame
 def consultar(query):
-    con = conectar_mysql()
-    df = pd.read_sql(query, con)
-    con.close()
+    client = conectar_bigquery()
+    df = client.query(query).to_dataframe()
     return df
 
-# Função para formatação de valores monetários
+# Formata valores monetários em estilo brasileiro
 def formatar_moeda(valor):
     return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-# Função para ler os arquivos EFD ICMS na pasta
+# Lê arquivos .txt ou .csv da pasta ICMS
 def ler_efd_icms(pasta="C:\\DIARIO\\ICMS"):
     arquivos = []
-    # Percorrer todos os arquivos na pasta
     for arquivo in os.listdir(pasta):
         if arquivo.endswith('.txt') or arquivo.endswith('.csv'):
             caminho_arquivo = os.path.join(pasta, arquivo)
             try:
-                # Lendo o arquivo e concatenando os dados
                 dados = pd.read_csv(caminho_arquivo, sep=';', encoding='latin1', header=None)
-                dados['nome_arquivo'] = arquivo  # Adiciona o nome do arquivo
+                dados['nome_arquivo'] = arquivo
                 arquivos.append(dados)
             except Exception as e:
                 print(f"Erro ao ler o arquivo {arquivo}: {e}")
     return pd.concat(arquivos, ignore_index=True) if arquivos else pd.DataFrame()
 
-# Função para filtrar e processar os dados com base no bloco
+# Filtra os blocos C100 e C170 e trata os dados
 def filtrar_blocos(dados):
-    # Filtrar os blocos de interesse
     dados_filtrados = dados[dados[0].str.startswith('|C100|') | dados[0].str.startswith('|C170|')]
-
-    # Dividir as colunas usando o delimitador '|'
     dados_divididos = dados_filtrados[0].str.split('|', expand=True)
 
-    # Renomear as colunas
-    dados_divididos.columns = ["Bloco", "CST", "CFOP", "Valor ICMS", "Valor PIS", "Valor COFINS", "NCM", "Aliquota ICMS"]
+    # Verifica se há colunas suficientes para evitar erro
+    colunas_esperadas = max(12, dados_divididos.shape[1])
+    dados_divididos = dados_divididos.reindex(columns=range(colunas_esperadas), fill_value='')
 
-    # Converter as colunas de valores monetários para tipo numérico
-    dados_divididos["Valor ICMS"] = pd.to_numeric(dados_divididos["Valor ICMS"], errors='coerce')
-    dados_divididos["Valor PIS"] = pd.to_numeric(dados_divididos["Valor PIS"], errors='coerce')
-    dados_divididos["Valor COFINS"] = pd.to_numeric(dados_divididos["Valor COFINS"], errors='coerce')
-    dados_divididos["Aliquota ICMS"] = pd.to_numeric(dados_divididos["Aliquota ICMS"], errors='coerce')
+    # Renomeia as colunas com nomes mais significativos
+    dados_divididos.columns = [f"col_{i}" for i in range(colunas_esperadas)]
 
-    return dados_divididos
+    # Extração de campos relevantes
+    dados_extraidos = pd.DataFrame()
+    dados_extraidos["tipo_bloco"] = dados_divididos["col_1"]
+    dados_extraidos["cfop"] = dados_divididos["col_11"]
+    dados_extraidos["valor_icms"] = pd.to_numeric(dados_divididos["col_8"], errors='coerce')
+    dados_extraidos["valor_pis"] = pd.to_numeric(dados_divididos["col_10"], errors='coerce')
+    dados_extraidos["valor_cofins"] = pd.to_numeric(dados_divididos["col_12"], errors='coerce')
+    dados_extraidos["ncm"] = dados_divididos["col_7"]
+    dados_extraidos["aliquota_icms"] = pd.to_numeric(dados_divididos["col_9"], errors='coerce')
+
+    return dados_extraidos

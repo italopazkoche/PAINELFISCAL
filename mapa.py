@@ -6,12 +6,30 @@ import requests
 def runmapa():
     st.title("🗺️ Mapa de Importações por Estado")
 
-    # Baixar GeoJSON do Brasil
+    # === FILTRO POR MÊS ===
+    meses_df = consultar("""
+        SELECT DISTINCT DATE_FORMAT(data_emissao, '%Y-%m') AS mes
+        FROM nfce
+        ORDER BY mes DESC;
+    """)
+    meses_disponiveis = meses_df["mes"].tolist()
+
+    if not meses_disponiveis:
+        st.warning("Nenhum mês disponível nos dados.")
+        st.stop()
+
+    mes_selecionado = st.selectbox("📅 Selecione o mês de referência:", ["Todos"] + meses_disponiveis)
+
+    filtro_mes = ""
+    if mes_selecionado != "Todos":
+        filtro_mes = f"AND DATE_FORMAT(data_emissao, '%Y-%m') = '{mes_selecionado}'"
+
+    # === BAIXAR GEOJSON DO BRASIL ===
     geojson_url = "https://raw.githubusercontent.com/codeforamerica/click_that_hood/master/public/data/brazil-states.geojson"
     geojson_data = requests.get(geojson_url).json()
 
-    # Consulta de clientes e valores por estado
-    dados_mapa = consultar("""
+    # === CONSULTAR DADOS ===
+    dados_mapa = consultar(f"""
         SELECT 
             uf_origem AS estado,
             razao_social_emitente,
@@ -19,11 +37,16 @@ def runmapa():
             SUM(valor_total) AS valor_total
         FROM nfce
         WHERE uf_origem IS NOT NULL AND uf_origem != ''
+        {filtro_mes}
         GROUP BY estado, cnpj_emitente, razao_social_emitente
         ORDER BY estado, valor_total DESC;
     """)
 
-    # Agrupar os dados para o mapa
+    if dados_mapa.empty:
+        st.warning("Nenhum dado encontrado para o mês selecionado.")
+        return
+
+    # === AGRUPAR DADOS POR ESTADO ===
     resumo = dados_mapa.groupby("estado").agg({
         "valor_total": "sum"
     }).reset_index()
@@ -33,7 +56,7 @@ def runmapa():
         for _, row in dados_mapa[dados_mapa["estado"] == uf].iterrows()
     ))
 
-    # Mapear siglas para nomes
+    # === MAPEAR SIGLAS PARA NOMES COMPLETOS DOS ESTADOS ===
     sigla_to_nome = {
         "AC": "Acre", "AL": "Alagoas", "AP": "Amapá", "AM": "Amazonas", "BA": "Bahia",
         "CE": "Ceará", "DF": "Distrito Federal", "ES": "Espírito Santo", "GO": "Goiás",
@@ -45,7 +68,7 @@ def runmapa():
     }
     resumo["estado_nome"] = resumo["estado"].map(sigla_to_nome)
 
-    # Criar mapa
+    # === CRIAR MAPA COROPLÉTICO ===
     fig = px.choropleth(
         resumo,
         geojson=geojson_data,
@@ -53,46 +76,39 @@ def runmapa():
         featureidkey="properties.name",
         color="valor_total",
         hover_name="estado_nome",
-        hover_data={
-            "clientes": True,
-            "valor_total": True,
-            "estado_nome": False
-        },
+        hover_data={"clientes": True, "valor_total": True, "estado_nome": False},
         color_continuous_scale="YlGnBu"
     )
 
-    # Ajustar as geometrias do mapa para mostrar todas as divisões entre estados e países
+    # === MELHORAR VISUAL DO MAPA ===
     fig.update_geos(
-        visible=True, 
-        showcoastlines=True, 
-        coastlinecolor="black",  # Exibir contornos de costa
-        showsubunits=True,  # Mostrar divisões entre os estados
-        subunitcolor="gray",  # Cor das divisões entre os estados
-        showlakes=True,  # Exibir lagos
-        lakecolor="white",  # Cor dos lagos
-        showland=True,  # Exibir terra
-        landcolor="white",  # Cor da terra
-        projection_scale=6,  # Ajuste do zoom para o Brasil
-        center=dict(lat=-14.2350, lon=-51.9253),  # Centralizar no Brasil
-        fitbounds="locations"  # Ajustar o mapa para mostrar apenas as localizações dos estados
-    )
-    
-    # Melhorias no design: ajustando o visual para um estilo mais corporativo
-    fig.update_layout(
-        title="Importações por Estado - Mapa",
-        title_x=0.5,  # Alinhar título ao centro
-        margin={"r":0,"t":30,"l":0,"b":0},
-        height=750,
-        geo=dict(
-            projection_scale=6,  # Ajustar o zoom para o Brasil
-            center=dict(lat=-14.2350, lon=-51.9253),  # Centralizar no Brasil
-            subunitcolor="gray",  # Cor das divisões entre os estados
-            countrycolor="black",  # Cor das divisões internacionais
-        ),
-        font=dict(family="Arial, sans-serif", size=14, color="black"),
-        plot_bgcolor="white",  # Fundo branco para o gráfico
-        paper_bgcolor="white"  # Fundo branco para o painel
+        visible=False,
+        fitbounds="locations",
+        showlakes=True,
+        lakecolor="white",
+        landcolor="white",
+        showcountries=True,
+        showsubunits=True,
+        subunitcolor="gray",
+        countrycolor="black"
     )
 
-    # Exibir o gráfico
+    fig.update_layout(
+        title="Importações por Estado",
+        title_x=0.5,
+        margin={"r":0,"t":30,"l":0,"b":0},
+        height=750,
+        font=dict(family="Arial, sans-serif", size=14, color="black"),
+        plot_bgcolor="white",
+        paper_bgcolor="white",
+        geo=dict(
+            showframe=False,
+            showcoastlines=False,
+            projection_type="mercator",
+            center=dict(lat=-14.2350, lon=-51.9253),
+            projection_scale=6
+        )
+    )
+
+    # === EXIBIR O GRÁFICO ===
     st.plotly_chart(fig, use_container_width=True)
