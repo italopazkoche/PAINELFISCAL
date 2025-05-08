@@ -2,15 +2,16 @@ import streamlit as st
 from google.cloud import bigquery
 from google.oauth2 import service_account
 import pandas as pd
+import os
+import json
 
 def run_resumo_por_item():
     st.title("📈 Resumo de XMLs de Saída por Mês")
 
-    # Configuração das credenciais do BigQuery
-    credenciais_path = "C:/Users/Casi/Desktop/bdxml-459201-61af2bc44fc9.json"
-    project_id = "bdxml-459201"
-    credentials = service_account.Credentials.from_service_account_file(credenciais_path)
-    client = bigquery.Client(credentials=credentials, project=project_id)
+    # Autenticação com credenciais via Streamlit Secrets
+    info = json.loads(os.environ["GOOGLE_APPLICATION_CREDENTIALS_JSON"])
+    credentials = service_account.Credentials.from_service_account_info(info)
+    client = bigquery.Client(credentials=credentials, project=info["project_id"])
 
     @st.cache_data(ttl=600)
     def carregar_resumo_por_item():
