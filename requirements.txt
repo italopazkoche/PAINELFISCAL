@@ -9,3 +9,4 @@ google-cloud-bigquery
 google-auth
 google-auth-oauthlib
 pyarrow
+db-dtypes
