@@ -1,13 +1,14 @@
 from google.cloud import bigquery
+from google.oauth2 import service_account
 import pandas as pd
 import os
+import json
 
-# Caminho para o arquivo de credenciais do serviço
-CAMINHO_CREDENCIAL = os.path.join(os.path.dirname(__file__), "credentials.json")
-
-# Cria o cliente do BigQuery
+# Lê as credenciais do segredo no ambiente
 def conectar_bigquery():
-    return bigquery.Client.from_service_account_json(CAMINHO_CREDENCIAL)
+    info = json.loads(os.environ["GOOGLE_APPLICATION_CREDENTIALS_JSON"])
+    credentials = service_account.Credentials.from_service_account_info(info)
+    return bigquery.Client(credentials=credentials, project=info["project_id"])
 
 # Executa query SQL no BigQuery e retorna um DataFrame
 def consultar(query):
@@ -38,14 +39,11 @@ def filtrar_blocos(dados):
     dados_filtrados = dados[dados[0].str.startswith('|C100|') | dados[0].str.startswith('|C170|')]
     dados_divididos = dados_filtrados[0].str.split('|', expand=True)
 
-    # Verifica se há colunas suficientes para evitar erro
     colunas_esperadas = max(12, dados_divididos.shape[1])
     dados_divididos = dados_divididos.reindex(columns=range(colunas_esperadas), fill_value='')
 
-    # Renomeia as colunas com nomes mais significativos
     dados_divididos.columns = [f"col_{i}" for i in range(colunas_esperadas)]
 
-    # Extração de campos relevantes
     dados_extraidos = pd.DataFrame()
     dados_extraidos["tipo_bloco"] = dados_divididos["col_1"]
     dados_extraidos["cfop"] = dados_divididos["col_11"]
