@@ -13,7 +13,6 @@ st.set_page_config(page_title="Resumo por Item", layout="wide")
 # ---------------------------
 # CREDENCIAIS (via Streamlit Secrets)
 # ---------------------------
-info = json.loads(os.environ["GOOGLE_APPLICATION_CREDENTIALS_JSON"])
 credentials = service_account.Credentials.from_service_account_info(info)
 client = bigquery.Client(credentials=credentials, project=info["project_id"])
 
