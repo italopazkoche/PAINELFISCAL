@@ -19,7 +19,7 @@ credentials = service_account.Credentials.from_service_account_info(info)
 client = bigquery.Client(credentials=credentials, project=info["project_id"])
 
 # ---------------------------
-# CONSULTA AO BIGQUERY
+# CONSULTA
 # ---------------------------
 @st.cache_data(ttl=600)
 def carregar_nfce_saida():
@@ -37,13 +37,10 @@ def carregar_nfce_saida():
     return client.query(query).to_dataframe()
 
 # ---------------------------
-# TÍTULO
+# PROCESSAMENTO
 # ---------------------------
 st.title("📦 Resumo de XMLs de Saída por Mês (2025)")
 
-# ---------------------------
-# CARREGAMENTO E PIVOTAMENTO
-# ---------------------------
 df = carregar_nfce_saida()
 
 df_pivot = df.pivot_table(
@@ -53,7 +50,6 @@ df_pivot = df.pivot_table(
     fill_value=0
 ).reset_index()
 
-# Renomear colunas dos meses
 meses = {
     1: "Jan", 2: "Fev", 3: "Mar", 4: "Abr", 5: "Mai",
     6: "Jun", 7: "Jul", 8: "Ago", 9: "Set", 10: "Out",
@@ -61,17 +57,17 @@ meses = {
 }
 df_pivot.rename(columns=meses, inplace=True)
 
-# ---------------------------
-# TOTALIZAÇÃO E EXIBIÇÃO PRINCIPAL
-# ---------------------------
 colunas_presentes = [col for col in meses.values() if col in df_pivot.columns]
 df_pivot["Total"] = df_pivot[colunas_presentes].sum(axis=1)
 
+# ---------------------------
+# EXIBIÇÃO PRINCIPAL
+# ---------------------------
 st.subheader("📊 Vendas por Cliente e Mês")
 st.dataframe(df_pivot, use_container_width=True)
 
 # ---------------------------
-# CLIENTES SEM XML NO MÊS ANTERIOR
+# RELATÓRIO DE CLIENTES SEM XML NO MÊS ANTERIOR
 # ---------------------------
 hoje = datetime.today()
 mes_atual = hoje.month
