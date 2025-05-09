@@ -8,7 +8,6 @@ import json
 # ---------------------------
 # CONFIGURAÇÃO
 # ---------------------------
-st.set_page_config(page_title="Resumo por Item", layout="wide")
 
 # ---------------------------
 # CREDENCIAIS (via Streamlit Secrets)
